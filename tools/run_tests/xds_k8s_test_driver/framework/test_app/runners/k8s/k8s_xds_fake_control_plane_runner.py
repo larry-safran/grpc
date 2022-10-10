@@ -20,7 +20,7 @@ from typing import List, Optional
 from framework.infrastructure import gcp
 from framework.infrastructure import k8s
 from framework.test_app.runners.k8s import k8s_base_runner
-from framework.test_app.fake_xds_control_plane_app import FakeXdsControlPlaneServer
+from framework.test_app.control_plane_app import FakeXdsControlPlaneServer
 
 logger = logging.getLogger(__name__)
 

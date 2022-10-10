@@ -101,6 +101,12 @@ SERVER_XDS_PORT = flags.DEFINE_integer(
           "Must be unique within a GCP project.\n"
           "Set to 0 to select any unused port."))
 
+# Test control plane
+CONTROL_PLANE_NAME = flags.DEFINE_string(
+  "control_plane_name",
+  default="psm-grpc-control-plane",
+  help="The name to use for test control plane deployments")
+
 # Test client
 CLIENT_NAME = flags.DEFINE_string(
     "client_name",

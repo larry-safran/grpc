@@ -40,6 +40,7 @@ from framework.rpc import grpc_csds
 from framework.rpc import grpc_testing
 from framework.test_app import client_app
 from framework.test_app import server_app
+from framework.test_app.control_plane_app import FakeXdsControlPlaneServer
 from framework.test_app.runners.k8s import k8s_xds_client_runner
 from framework.test_app.runners.k8s import k8s_xds_server_runner
 from framework.test_app.runners.k8s import k8s_xds_fake_control_plane_runner
@@ -62,7 +63,7 @@ XdsTestServer = server_app.XdsTestServer
 XdsTestClient = client_app.XdsTestClient
 KubernetesServerRunner = k8s_xds_server_runner.KubernetesServerRunner
 KubernetesClientRunner = k8s_xds_client_runner.KubernetesClientRunner
-KubernetesFakeXdsControlPlaneRunner = k8s_xds_fake_control_plane_runner.KubernetesFakeXdsControlPlaneRunner
+K8sCpRunner = k8s_xds_fake_control_plane_runner.KubernetesFakeXdsControlPlaneRunner
 LoadBalancerStatsResponse = grpc_testing.LoadBalancerStatsResponse
 _ChannelState = grpc_channelz.ChannelState
 _timedelta = datetime.timedelta
@@ -394,7 +395,7 @@ class XdsKubernetesBaseTestCase(absltest.TestCase):
 
 
 class IsolatedWithoutCPXdsKubernetesTestCase(XdsKubernetesBaseTestCase,
-                                    metaclass=abc.ABCMeta):
+                                             metaclass=abc.ABCMeta):
   """Isolated test case.
 
   Base class for tests cases where infra resources are created before
@@ -495,6 +496,7 @@ class IsolatedXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCase,
     self.td.cleanup(force=self.force_cleanup)
     self.cleanupClientAndServer()
 
+
 class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCase,
                                             metaclass=abc.ABCMeta):
   """Fake control plane test case.
@@ -512,17 +514,17 @@ class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCa
     super.cleanupClientAndServer()
     self.control_plane.cleanup()
 
-  def initFakeXdsControlPlane(self) -> KubernetesFakeXdsControlPlaneRunner:
-    return KubernetesFakeXdsControlPlaneRunner(
+# TODO verify correctness
+  def initFakeXdsControlPlane(self) -> K8sCpRunner:
+    return K8sCpRunner(
       k8s.KubernetesNamespace(self.k8s_api_manager,
                               self.server_namespace),
-      deployment_name=self.server_name,
-      image_name=self.server_image,
-      td_bootstrap_image=self.td_bootstrap_image, # TODO
+      deployment_name=self.control_plane_name,
+      image_name=self.control_plane_image,
+      bootstrap_image=self.cp_bootstrap_image,
       gcp_project=self.project,
       gcp_api_manager=self.gcp_api_manager,
       gcp_service_account=self.gcp_service_account,
-      xds_server_uri=self.xds_server_uri,
       network=self.network,
       debug_use_port_forwarding=self.debug_use_port_forwarding,
       enable_workload_identity=self.enable_workload_identity)
@@ -533,7 +535,7 @@ class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCa
                               self.server_namespace),
       deployment_name=self.server_name,
       image_name=self.server_image,
-      td_bootstrap_image=self.td_bootstrap_image, # TODO
+      td_bootstrap_image=self.cp_bootstrap_image,
       gcp_project=self.project,
       gcp_api_manager=self.gcp_api_manager,
       gcp_service_account=self.gcp_service_account,
@@ -548,7 +550,7 @@ class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCa
                               self.client_namespace),
       deployment_name=self.client_name,
       image_name=self.client_image,
-      td_bootstrap_image=self.td_bootstrap_image,
+      td_bootstrap_image=self.cp_bootstrap_image,
       gcp_project=self.project,
       gcp_api_manager=self.gcp_api_manager,
       gcp_service_account=self.gcp_service_account,
@@ -558,6 +560,13 @@ class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCa
       enable_workload_identity=self.enable_workload_identity,
       stats_port=self.client_port,
       reuse_namespace=self.server_namespace == self.client_namespace)
+
+  def startFakeControlPlane(self, cp_runner=None, **kwargs) -> FakeXdsControlPlaneServer:
+    if cp_runner is None:
+      cp_runner = self.cp_runner
+    control_plane = cp_runner.run(kwargs)
+    return control_plane
+
 
   def startTestServers(self,
                        replica_count=1,
@@ -574,6 +583,7 @@ class FakeControlPlaneXdsKubernetesTestCase(IsolatedWithoutCPXdsKubernetesTestCa
       test_server.set_xds_address(self.server_xds_host,
                                   self.server_xds_port)
     return test_servers
+
 
   def startTestClient(self, test_server: XdsTestServer,
                       **kwargs) -> XdsTestClient:

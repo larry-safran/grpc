@@ -20,13 +20,10 @@ from grpc import StatusCode
 from framework import xds_k8s_flags
 from framework import xds_k8s_testcase
 from framework.helpers import skips
-from framework.infrastructure import k8s
-from framework.test_app import fake_xds_control_plan_app
-from framework.test_app.runners.k8s import k8s_xds_server_runner
+from framework.test_app.runners.k8s import k8s_xds_fake_control_plane_runner
 
-from tools.run_tests.xds_k8s_test_driver.framework.helpers import datetime
-from tools.run_tests.xds_k8s_test_driver.framework.test_app.fake_xds_control_plane_app import \
-  ControlData, AberationType
+from framework.helpers import datetime
+from framework.test_app.control_plane_app import AberationType, ControlData, TriggerTime
 
 logger = logging.getLogger(__name__)
 flags.adopt_module_key_flags(xds_k8s_testcase)
@@ -35,21 +32,179 @@ flags.adopt_module_key_flags(xds_k8s_testcase)
 _Lang = skips.Lang
 _XdsTestServer = xds_k8s_testcase.XdsTestServer
 _XdsTestClient = xds_k8s_testcase.XdsTestClient
-_KubernetesServerRunner = k8s_xds_server_runner.KubernetesFakeXdsControlPlaneRunner
-_TriggerTime = fake_xds_control_plan_app.TriggerTime
-_ExtraResourceChoice = fake_xds_control_plan_app.ExtraResourceChoice
-_ResourceType = fake_xds_control_plan_app.ResourceType
-_TypedTrigger = fake_xds_control_plan_app.TypedTrigger
+K8sCpRunner = k8s_xds_fake_control_plane_runner.KubernetesFakeXdsControlPlaneRunner
 
 
 class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
-  REPLICA_COUNT = 3
+  REPLICA_COUNT = 1
   MAX_RATE_PER_ENDPOINT = 100
 
-  STANDARD_LDS_CONFIG = ''  # TODO figure out actual
-  STANDARD_RDS_CONFIG = ''  # TODO figure out actual
-  STANDARD_CDS_CONFIG = ''  # TODO figure out actual
-  STANDARD_EDS_CONFIG = ''  # TODO figure out actual
+  STANDARD_LDS_CONFIG = '''
+  {
+    "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
+    "name": "psm-grpc-server:14427",
+    "apiListener": {
+      "apiListener": {
+        "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+        "statPrefix": "trafficdirector",
+        "rds": {
+          "configSource": {
+            "ads": {
+            },
+            "resourceApiVersion": "V3"
+          },
+          "routeConfigName": "URL_MAP/830293263384_psm-interop-url-map-20220928-0836-dz2xb_0_psm-grpc-server:14427"
+        },
+        "httpFilters": [{
+          "name": "envoy.filters.http.fault",
+          "typedConfig": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault"
+          }
+        }, {
+          "name": "envoy.filters.http.router",
+          "typedConfig": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+            "suppressEnvoyHeaders": true
+          }
+        }],
+        "normalizePath": true,
+        "mergeSlashes": true
+      }
+    }
+  }
+  '''
+
+  STANDARD_RDS_CONFIG = '''
+  {
+    "@type": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+    "name": "URL_MAP/830293263384_psm-interop-url-map-20220928-0836-dz2xb_0_psm-grpc-server:14427",
+    "virtualHosts": [{
+      "domains": ["psm-grpc-server:14427"],
+      "routes": [{
+        "match": {
+          "prefix": ""
+        },
+        "route": {
+          "cluster": "cloud-internal-istio:cloud_mp_830293263384_5089449662400280953",
+          "timeout": "30s",
+          "retryPolicy": {
+            "retryOn": "gateway-error",
+            "numRetries": 1,
+            "perTryTimeout": "30s"
+          }
+        },
+        "name": "URL_MAP/830293263384_psm-interop-url-map-20220928-0836-dz2xb_0_psm-grpc-server:14427-route-0"
+      }]
+    }]
+  }
+    '''  # TODO figure out actual
+  STANDARD_CDS_CONFIG = '''
+  {
+    "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+    "name": "cloud-internal-istio:cloud_mp_830293263384_5089449662400280953",
+    "type": "EDS",
+    "edsClusterConfig": {
+      "edsConfig": {
+        "ads": {
+        },
+        "initialFetchTimeout": "15s",
+        "resourceApiVersion": "V3"
+      }
+    },
+    "connectTimeout": "30s",
+    "circuitBreakers": {
+      "thresholds": [{
+        "maxConnections": 2147483647,
+        "maxPendingRequests": 2147483647,
+        "maxRequests": 2147483647,
+        "maxRetries": 2147483647
+      }]
+    },
+    "http2ProtocolOptions": {
+      "maxConcurrentStreams": 100
+    },
+    "transportSocket": {
+      "name": "envoy.transport_sockets.tls",
+      "typedConfig": {
+        "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+        "commonTlsContext": {
+          "alpnProtocols": ["h2"],
+          "tlsCertificateSdsSecretConfigs": [{
+            "name": "tls_sds",
+            "sdsConfig": {
+              "path": "/etc/envoy/tls_certificate_context_sds_secret.yaml"
+            }
+          }],
+          "combinedValidationContext": {
+            "defaultValidationContext": {
+              "matchSubjectAltNames": [{
+                "exact": "spiffe://grpc-testing.svc.id.goog/ns/psm-interop-server-20220928-0836-dz2xb/sa/psm-grpc-server"
+              }]
+            },
+            "validationContextSdsSecretConfig": {
+              "name": "validation_context_sds",
+              "sdsConfig": {
+                "path": "/etc/envoy/validation_context_sds_secret.yaml"
+              }
+            },
+            "validationContextCertificateProviderInstance": {
+              "instanceName": "google_cloud_private_spiffe",
+              "certificateName": "ROOTCA"
+            }
+          },
+          "tlsCertificateCertificateProviderInstance": {
+            "instanceName": "google_cloud_private_spiffe",
+            "certificateName": "DEFAULT"
+          }
+        }
+      }
+    },
+    "metadata": {
+      "filterMetadata": {
+        "com.google.trafficdirector": {
+          "backend_service_name": "psm-interop-backend-service-20220928-0836-dz2xb",
+          "backend_service_project_number": 8.30293263384E11
+        }
+      }
+    },
+    "commonLbConfig": {
+      "healthyPanicThreshold": {
+        "value": 1.0
+      },
+      "localityWeightedLbConfig": {
+      }
+    },
+    "altStatName": "/projects/830293263384/global/backendServices/psm-interop-backend-service-20220928-0836-dz2xb",
+    "lrsServer": {
+      "self": {
+      }
+    }
+  }
+  '''  # TODO figure out actual
+
+  STANDARD_EDS_CONFIG = '''
+  {
+    "@type": "type.googleapis.com/envoy.config.endpoint.v3.ClusterLoadAssignment",
+    "clusterName": "cloud-internal-istio:cloud_mp_830293263384_5089449662400280953",
+    "endpoints": [{
+      "locality": {
+        "subZone": "ib:us-central1-a_2239524602765751982_neg"
+      },
+      "lbEndpoints": [{
+        "endpoint": {
+          "address": {
+            "socketAddress": {
+              "address": "10.88.5.48",
+              "portValue": 8080
+            }
+          }
+        },
+        "healthStatus": "HEALTHY"
+      }],
+      "loadBalancingWeight": 100
+    }]
+  }
+  '''  # TODO figure out actual
 
   @classmethod
   def setUpClass(cls):
@@ -62,24 +217,17 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
 
   def setUp(self):
     super().setUp()
-    self.secondary_server_runner = _KubernetesServerRunner(
-      k8s.KubernetesNamespace(self.secondary_k8s_api_manager,
-                              self.server_namespace),
-      deployment_name=self.server_name + '-alt',
-      image_name=self.server_image,
-      gcp_service_account=self.gcp_service_account,
-      td_bootstrap_image=self.td_bootstrap_image,
-      gcp_project=self.project,
-      gcp_api_manager=self.gcp_api_manager,
-      xds_server_uri=self.xds_server_uri,
-      network=self.network,
-      debug_use_port_forwarding=self.debug_use_port_forwarding,
-      force_cleanup=True,
-      # This runner's namespace created in the secondary cluster,
-      # so it's not reused and must be cleaned up.
-      reuse_namespace=False)
-    # Setup configuration
+
+    # Launch fake control plane
+    # self.cp_namespace = KubernetesServerRunner.make_namespace_name(
+    #   self.resource_prefix, self.resource_suffix)
+    self.cp_runner = self.initFakeXdsControlPlane()
+    self.startFakeControlPlane(self.cp_runner)
+
+    test_server: _XdsTestServer = self.startTestServers()[0]
+    # self.setupServerBackends()
     self.setStandardXdsConfig()
+    test_client: _XdsTestClient = self.startTestClient(test_server)
 
   def cleanup(self):
     super().cleanup()
@@ -118,11 +266,11 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     # TODO cleanup client & reset stats
 
   def checkStatusCodes(self) -> None:
-    for trigger in [_TriggerTime.BEFORE_LDS,
-                    _TriggerTime.BEFORE_ENDPOINTS,
-                    _TriggerTime.AFTER_ENDPOINTS]:
+    for trigger in [TriggerTime.BEFORE_LDS,
+                    TriggerTime.BEFORE_ENDPOINTS,
+                    TriggerTime.AFTER_ENDPOINTS]:
       for code in StatusCode.__members__.items():
-        if (code != StatusCode.OK):
+        if code != StatusCode.OK:
           self.assertStatusCode(trigger, code)
 
   def checkUnexpectedResources(self) -> None:
@@ -138,9 +286,9 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
 
   def checkMissingRes(self) -> None:
     self.test_client = self.createClient()
-    for trigger_time in [_TriggerTime.BEFORE_RDS,
-                         _TriggerTime.BEFORE_CDS,
-                         _TriggerTime.BEFORE_ENDPOINTS]:
+    for trigger_time in [TriggerTime.BEFORE_RDS,
+                         TriggerTime.BEFORE_CDS,
+                         TriggerTime.BEFORE_ENDPOINTS]:
       self.sendResourcesUntil(trigger_time)
       self.assertRpcsUnavailable(self.test_client)
 
@@ -163,14 +311,14 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     self.cp.setXdsConfig('LDS', self.STANDARD_LDS_CONFIG)  # todo get actual config
     self.cp.setXdsConfig('CDS', self.STANDARD_CDS_CONFIG)
     self.cp.setXdsConfig('RDS', self.STANDARD_RDS_CONFIG)
-    if (include_eds):
+    if include_eds:
       self.cp.setXdsConfig('EDS', self.STANDARD_EDS_CONFIG)
     else:
       self.cp.setXdsConfig('EDS', None)
 
     self.cp.setExtraResources(None)
 
-  def assertStatusCode(self, trigger_aberration: _TriggerTime, status_code: StatusCode):
+  def assertStatusCode(self, trigger_aberration: TriggerTime, status_code: StatusCode):
     self.cp.updateControlData(ControlData(trigger_aberration,
                                           AberationType.STATUS_CODE,
                                           status_code))
@@ -181,28 +329,28 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
                               method='UNARY_CALL')
 
   def testDuringProcess(self, ab_type: AberationType):
-    cd = ControlData(_TriggerTime.BEFORE_LDS, ab_type)
+    cd = ControlData(TriggerTime.BEFORE_LDS, ab_type)
 
     self.cp.updateControlData(cd)
     self.test_client = self.createClient()
     # TODO check for what?
 
-    cd.trigger_aberration = _TriggerTime.BEFORE_ENDPOINTS
+    cd.trigger_aberration = TriggerTime.BEFORE_ENDPOINTS
     self.cp.updateControlData(cd)
     self.test_client = self.createClient()
     # TODO check that RPCs are queued
 
-    cd.trigger_aberration = _TriggerTime.AFTER_ENDPOINTS
+    cd.trigger_aberration = TriggerTime.AFTER_ENDPOINTS
     self.cp.updateControlData(cd)
     self.test_client = self.createClient()
     self.assertSuccessfulRpcs(self.test_client)
 
-  def sendResourcesUntil(self, trigger_time: _TriggerTime):
+  def sendResourcesUntil(self, trigger_time: TriggerTime):
     cd = ControlData(trigger_time, AberationType.MISSING_RESOURCES,)
     self.cp.updateControlData(cd)
 
   def testDeleteBeforeEndpoints(self, ds_type:str, default:str):
-    self.sendResourcesUntil(_TriggerTime.BEFORE_ENDPOINTS)
+    self.sendResourcesUntil(TriggerTime.BEFORE_ENDPOINTS)
     self.test_client = self.createClient()
 
     self.cp.setXdsConfig(ds_type, None)
@@ -220,7 +368,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     self.cp.setXdsConfig(ds_type, None)
     self.cp.updateControlData(ControlData(None))
 
-    if (new_style):
+    if new_style:
       self.assertSuccessfulRpcs(self.test_client)
     else:
       self.assertRpcsUnavailable(self.test_client)
@@ -234,6 +382,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
                               status_code=StatusCode.UNAVAILABLE,
                               duration=datetime.timedelta(seconds=10),
                               method='UNARY_CALL')
+
 
 if __name__ == '__main__':
   absltest.main(failfast=True)

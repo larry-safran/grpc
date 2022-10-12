@@ -17,9 +17,6 @@ Provides an interface to fake control plane server running remotely.
 import functools
 import logging
 from typing import Iterator, Optional
-from enum import Enum
-
-from grpc import StatusCode
 import framework.rpc
 from framework.rpc import grpc_channelz
 from framework.rpc import grpc_testing
@@ -114,74 +111,3 @@ class FakeXdsControlPlaneServer(framework.rpc.grpc.GrpcApp):
         """
     server = self.get_test_server()
     return self.channelz.list_server_sockets(server)
-
-  # def get_server_socket_matching_client(self,
-  #                                       client_socket: grpc_channelz.Socket):
-  #     """Find test server socket that matches given test client socket.
-  #
-  #     Sockets are matched using TCP endpoints (ip:port), further on "address".
-  #     Server socket remote address matched with client socket local address.
-  #
-  #      Raises:
-  #          GrpcApp.NotFound: Server socket matching client socket not found.
-  #      """
-  #     client_local = self.channelz.sock_address_to_str(client_socket.local)
-  #     logger.debug(
-  #         '[%s] Looking for a server socket connected '
-  #         'to the client %s', self.hostname, client_local)
-  #
-  #     server_socket = self.channelz.find_server_socket_matching_client(
-  #         self.get_test_server_sockets(), client_socket)
-  #     if not server_socket:
-  #         raise self.NotFound(f'[{self.hostname}] Socket '
-  #                             f'to client {client_local} not found')
-  #
-  #     logger.info(
-  #         '[%s] Found matching socket pair: '
-  #         'server(%s) <-> client(%s)', self.hostname,
-  #         self.channelz.sock_addresses_pretty(server_socket),
-  #         self.channelz.sock_addresses_pretty(client_socket))
-  #     return server_socket
-
-
-class TriggerTime(Enum):
-  BEFORE_LDS = 1
-  BEFORE_CDS = 2
-  BEFORE_RDS = 3
-  BEFORE_ENDPOINTS = 4
-  AFTER_ENDPOINTS = 5
-
-
-class ExtraResourceChoice(Enum):
-  EXTRA_ONLY = 1
-  ALL_REQ = 2
-  SOME_REQ = 3  # replace as many required as there are extra so total number is what was expected
-
-
-class ResourceType(Enum):
-  LDS = 'lds'
-  CDS = 'cds'
-  RDS = 'rds'
-  EDS = 'eds'
-
-
-class AberationType(Enum):
-  STATUS_CODE = 'status code'
-  SEND_EXTRA = 'send extra'
-  SEND_EMPTY = 'send empty'
-  SEND_REDUNDANT = 'send redundant'
-  MISSING_RESOURCES = 'skip setting'
-
-
-class ControlData:
-
-  def __init__(self,
-               trigger_aberration: TriggerTime,
-               aberration_type: AberationType = None,
-               status_code=StatusCode.OK,
-               affected_types: [ResourceType] = []
-               ):
-    self.trigger_aberration = trigger_aberration
-    self.status_code = status_code
-    self.affected_types = affected_types
-    self.aberration_type = aberration_type

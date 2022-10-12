@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 
+import grpc
 from absl import flags
 from absl.testing import absltest
 
@@ -23,7 +24,10 @@ from framework.helpers import skips
 from framework.test_app.runners.k8s import k8s_xds_fake_control_plane_runner
 
 from framework.helpers import datetime
-from framework.test_app.control_plane_app import AberationType, ControlData, TriggerTime
+from src.proto.grpc.testing.xds.v3.xds_test_config_service_pb2 import AberrationType, ControlData,\
+  TriggerTime
+import src.proto.grpc.testing.xds.v3.xds_test_config_service_pb2_grpc as gcfg_svc
+
 
 logger = logging.getLogger(__name__)
 flags.adopt_module_key_flags(xds_k8s_testcase)
@@ -38,6 +42,31 @@ K8sCpRunner = k8s_xds_fake_control_plane_runner.KubernetesFakeXdsControlPlaneRun
 class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
   REPLICA_COUNT = 1
   MAX_RATE_PER_ENDPOINT = 100
+  cp: gcfg_svc.XdsTestConfigService
+
+  EXTRA_CONFIG = '''
+  {
+    "@type": "type.googleapis.com/grpc.testing.ExtraResourceRequest",
+    "configurations": [
+      {
+        "@type": "type.googleapis.com/grpc.testing.XdsConfig",
+        "type" : 0,
+        "configuration": [ {
+          "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
+          "name": "dummy1",
+        }]
+      },
+      {
+        "@type": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+        "name": "dummy1R",
+      },
+      {
+        "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+        "name": "dummy1C",
+      }
+    ]
+  }
+  '''
 
   STANDARD_LDS_CONFIG = '''
   {
@@ -222,7 +251,9 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     # self.cp_namespace = KubernetesServerRunner.make_namespace_name(
     #   self.resource_prefix, self.resource_suffix)
     self.cp_runner = self.initFakeXdsControlPlane()
-    self.startFakeControlPlane(self.cp_runner)
+    self.cp = self.startFakeControlPlane(self.cp_runner)
+    with grpc.insecure_channel('localhost:50051') as channel:
+      self.control_stub = gcfg_svc.XdsTestConfigServiceStub(channel)
 
     test_server: _XdsTestServer = self.startTestServers()[0]
     # self.setupServerBackends()
@@ -231,8 +262,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
 
   def cleanup(self):
     super().cleanup()
-    self.secondary_server_runner.cleanup(
-      force=self.force_cleanup, force_namespace=self.force_cleanup)
+    self.cp_runner.cleanup(force=self.force_cleanup)
 
   def test_client_cp(self) -> None:
     # start server
@@ -274,15 +304,14 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
           self.assertStatusCode(trigger, code)
 
   def checkUnexpectedResources(self) -> None:
-    extra_resources = ''  # TODO define extra resources
-    self.cp.setExtraResources(extra_resources)
-    self.testDuringProcess(AberationType.SEND_EXTRA)
+    self.control_stub.setExtraResources(self.EXTRA_CONFIG)
+    self.testDuringProcess(AberrationType.SEND_EXTRA)
 
   def checkEmptyUpdates(self) -> None:
-    self.testDuringProcess(AberationType.SEND_EMPTY)
+    self.testDuringProcess(AberrationType.SEND_EMPTY)
 
   def checkRedundantUpdates(self) -> None:
-    self.testDuringProcess(AberationType.SEND_REDUNDANT)
+    self.testDuringProcess(AberrationType.SEND_REDUNDANT)
 
   def checkMissingRes(self) -> None:
     self.test_client = self.createClient()
@@ -308,19 +337,19 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
 ######### Helper functions
 
   def setStandardXdsConfig(self, include_eds=True):
-    self.cp.setXdsConfig('LDS', self.STANDARD_LDS_CONFIG)  # todo get actual config
-    self.cp.setXdsConfig('CDS', self.STANDARD_CDS_CONFIG)
-    self.cp.setXdsConfig('RDS', self.STANDARD_RDS_CONFIG)
+    self.control_stub.setXdsConfig('LDS', self.STANDARD_LDS_CONFIG)  # todo get actual config
+    self.control_stub.setXdsConfig('CDS', self.STANDARD_CDS_CONFIG)
+    self.control_stub.setXdsConfig('RDS', self.STANDARD_RDS_CONFIG)
     if include_eds:
-      self.cp.setXdsConfig('EDS', self.STANDARD_EDS_CONFIG)
+      self.control_stub.setXdsConfig('EDS', self.STANDARD_EDS_CONFIG)
     else:
-      self.cp.setXdsConfig('EDS', None)
+      self.control_stub.setXdsConfig('EDS', None)
 
-    self.cp.setExtraResources(None)
+    self.control_stub.setExtraResources(None)
 
   def assertStatusCode(self, trigger_aberration: TriggerTime, status_code: StatusCode):
     self.cp.updateControlData(ControlData(trigger_aberration,
-                                          AberationType.STATUS_CODE,
+                                          AberrationType.STATUS_CODE,
                                           status_code))
     self.test_client = self.createClient()
     self.assertRpcStatusCodes(self.test_client,
@@ -328,7 +357,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
                               duration=datetime.timedelta(seconds=10),
                               method='UNARY_CALL')
 
-  def testDuringProcess(self, ab_type: AberationType):
+  def testDuringProcess(self, ab_type: AberrationType):
     cd = ControlData(TriggerTime.BEFORE_LDS, ab_type)
 
     self.cp.updateControlData(cd)
@@ -346,7 +375,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     self.assertSuccessfulRpcs(self.test_client)
 
   def sendResourcesUntil(self, trigger_time: TriggerTime):
-    cd = ControlData(trigger_time, AberationType.MISSING_RESOURCES,)
+    cd = ControlData(trigger_time, AberrationType.MISSING_RESOURCES,)
     self.cp.updateControlData(cd)
 
   def testDeleteBeforeEndpoints(self, ds_type:str, default:str):

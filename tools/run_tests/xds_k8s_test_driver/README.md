@@ -187,7 +187,8 @@ python -m grpc_tools.protoc --proto_path=../../../ \
     --python_out=. --grpc_python_out=. \
     src/proto/grpc/testing/empty.proto \
     src/proto/grpc/testing/messages.proto \
-    src/proto/grpc/testing/test.proto
+    src/proto/grpc/testing/test.proto \
+    src/proto/grpc/testing/xds/v3/xds_test_config_service.proto
 ```
 
 # Basic usage

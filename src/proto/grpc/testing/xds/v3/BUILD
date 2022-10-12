@@ -429,7 +429,6 @@ grpc_proto_library(
     well_known_protos = True,
 )
 
-
 py_proto_library(
     name = "csds_py_pb2",
     deps = [":_csds_proto_only"],
@@ -449,11 +448,6 @@ py_proto_library(
 py_proto_library(
     name = "base_py_pb2",
     deps = [":_base_proto_only"],
-)
-
-py_proto_library(
-    name = "xds_test_config_service_py_pb2",
-    deps = [":_xds_test_config_service_proto_only"],
 )
 
 py_proto_library(

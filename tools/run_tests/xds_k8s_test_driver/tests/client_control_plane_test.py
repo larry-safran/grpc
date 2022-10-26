@@ -322,7 +322,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
       self.assertRpcsUnavailable(self.test_client)
 
     # Verify everything starts working when full configuration is sent
-    self.cp.updateControlData(ControlData(None, None))
+    self.control_stub.updateControlData(ControlData(None, None))
     self.assertSuccessfulRpcs(self.test_client)
 
 
@@ -337,7 +337,9 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
 ######### Helper functions
 
   def setStandardXdsConfig(self, include_eds=True):
-    self.control_stub.setXdsConfig('LDS', self.STANDARD_LDS_CONFIG)  # todo get actual config
+    # TODO massage standard configs using server host and port
+
+    self.control_stub.setXdsConfig('LDS', self.STANDARD_LDS_CONFIG)
     self.control_stub.setXdsConfig('CDS', self.STANDARD_CDS_CONFIG)
     self.control_stub.setXdsConfig('RDS', self.STANDARD_RDS_CONFIG)
     if include_eds:
@@ -348,7 +350,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
     self.control_stub.setExtraResources(None)
 
   def assertStatusCode(self, trigger_aberration: TriggerTime, status_code: StatusCode):
-    self.cp.updateControlData(ControlData(trigger_aberration,
+    self.control_stub.updateControlData(ControlData(trigger_aberration,
                                           AberrationType.STATUS_CODE,
                                           status_code))
     self.test_client = self.createClient()
@@ -360,42 +362,42 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
   def testDuringProcess(self, ab_type: AberrationType):
     cd = ControlData(TriggerTime.BEFORE_LDS, ab_type)
 
-    self.cp.updateControlData(cd)
+    self.control_stub.updateControlData(cd)
     self.test_client = self.createClient()
     # TODO check for what?
 
     cd.trigger_aberration = TriggerTime.BEFORE_ENDPOINTS
-    self.cp.updateControlData(cd)
+    self.control_stub.updateControlData(cd)
     self.test_client = self.createClient()
     # TODO check that RPCs are queued
 
     cd.trigger_aberration = TriggerTime.AFTER_ENDPOINTS
-    self.cp.updateControlData(cd)
+    self.control_stub.updateControlData(cd)
     self.test_client = self.createClient()
     self.assertSuccessfulRpcs(self.test_client)
 
   def sendResourcesUntil(self, trigger_time: TriggerTime):
     cd = ControlData(trigger_time, AberrationType.MISSING_RESOURCES,)
-    self.cp.updateControlData(cd)
+    self.control_stub.updateControlData(cd)
 
   def testDeleteBeforeEndpoints(self, ds_type:str, default:str):
     self.sendResourcesUntil(TriggerTime.BEFORE_ENDPOINTS)
     self.test_client = self.createClient()
 
-    self.cp.setXdsConfig(ds_type, None)
-    self.cp.updateControlData(ControlData(None))
+    self.control_stub.setXdsConfig(ds_type, None)
+    self.control_stub.updateControlData(ControlData(None))
     self.assertRpcsUnavailable(self.test_client)
 
     # restore the default and it should succeed
-    self.cp.setXdsConfig(ds_type, default)
+    self.control_stub.setXdsConfig(ds_type, default)
     self.assertSuccessfulRpcs(self.test_client)
 
   def testDeleteAfterEndpoints(self, ds_type:str, default:str):
     new_style = False  # With new option set in the bootstrap these would succeed
     self.setStandardXdsConfig()
     self.test_client = self.createClient()
-    self.cp.setXdsConfig(ds_type, None)
-    self.cp.updateControlData(ControlData(None))
+    self.control_stub.setXdsConfig(ds_type, None)
+    self.control_stub.updateControlData(ControlData(None))
 
     if new_style:
       self.assertSuccessfulRpcs(self.test_client)
@@ -403,7 +405,7 @@ class ClientCPTest(xds_k8s_testcase.FakeControlPlaneXdsKubernetesTestCase):
       self.assertRpcsUnavailable(self.test_client)
 
     # restore the default and it should succeed
-    self.cp.setXdsConfig(ds_type, default)
+    self.control_stub.setXdsConfig(ds_type, default)
     self.assertSuccessfulRpcs(self.test_client)
 
   def assertRpcsUnavailable(self, test_client):
